@@ -25,7 +25,7 @@ jobs:
         id: generate_token
         with:
           app-id: ${{ secrets.GEMINI_BOT_APP_ID }}
-          private_key: ${{ secrets.GEMINI_BOT_PRIVATE_KEY }}
+          private-key: ${{ secrets.GEMINI_BOT_PRIVATE_KEY }}
 
       - name: Run Gemini Code Review
         uses: sshnaidm/gemini-code-review-action@v2
