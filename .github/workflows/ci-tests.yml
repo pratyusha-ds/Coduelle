@@ -20,13 +20,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Run Gateway Service Tests
-        working-directory: ./coduelle-gateway
-        run: |
-          chmod +x gradlew
-          ./gradlew test
+        run: ./gradlew :coduelle-gateway:test
 
       - name: Run Judge Worker Tests
-        working-directory: ./coduelle-judge-worker
-        run: |
-          chmod +x gradlew
-          ./gradlew test
+        run: ./gradlew :coduelle-judge-worker:test
