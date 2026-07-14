@@ -20,6 +20,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Request Review from Gemini Bot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} --add-reviewer "coduelle-gemini-bot[bot]"
+
       - name: Generate Gemini Bot Token
         uses: actions/create-github-app-token@v1
         id: generate_token
