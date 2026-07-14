@@ -34,37 +34,53 @@ jobs:
         run: |
           DIFF=$(git diff origin/${{ github.base_ref }}...HEAD)
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg diff "$DIFF" '{
-              contents: [{
-                parts: [{
-                  text: "You are a strict, helpful code review assistant for a project called Coduelle. Review the following pull request diff and provide a concise, actionable code review.\n\nFor every issue you discover:\n1. Clearly state the performance, architectural, or logic problem.\n2. Provide the exact fix wrapped inside a GitHub suggestion code block like this:\n\n```suggestion\n[fixed code snippet]\n```\n\nEnsure the code inside the suggestion snippet accurately replaces the relevant chunk of the diff.\nIf there are no issues, respond with: \"No issues found. The changes look good.\"\n\nDiff to review:\n$diff"
+          MAX_RETRIES=3
+          RETRY_DELAY=10
+
+          for ATTEMPT in $(seq 1 $MAX_RETRIES); do
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg diff "$DIFF" '{
+                contents: [{
+                  parts: [{
+                    text: "You are a strict, helpful code review assistant for a project called Coduelle. Review the following pull request diff and provide a concise, actionable code review.\n\nFor every issue you discover:\n1. Clearly state the performance, architectural, or logic problem.\n2. Provide the exact fix wrapped inside a GitHub suggestion code block like this:\n\n```suggestion\n[fixed code snippet]\n```\n\nEnsure the code inside the suggestion snippet accurately replaces the relevant chunk of the diff.\nIf there are no issues, respond with: \"No issues found. The changes look good.\"\n\nDiff to review:\n$diff"
+                  }]
                 }]
-              }]
-            }')")
+              }')")
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Gemini API returned HTTP $HTTP_CODE" >&2
+            if [ "$HTTP_CODE" = "200" ]; then
+              REVIEW=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text')
+              if [ -n "$REVIEW" ] && [ "$REVIEW" != "null" ]; then
+                echo "$REVIEW" > /tmp/review.md
+                echo "review_status=success" >> $GITHUB_OUTPUT
+                echo "Review generated successfully"
+                exit 0
+              fi
+            fi
+
+            if [ "$HTTP_CODE" = "503" ] || [ "$HTTP_CODE" = "429" ]; then
+              echo "Attempt $ATTEMPT/$MAX_RETRIES: Gemini API returned HTTP $HTTP_CODE (transient). Retrying in ${RETRY_DELAY}s..." >&2
+              sleep $RETRY_DELAY
+              RETRY_DELAY=$((RETRY_DELAY * 2))
+              continue
+            fi
+
+            echo "Attempt $ATTEMPT/$MAX_RETRIES: Gemini API returned HTTP $HTTP_CODE" >&2
             echo "$BODY" | jq -r '.error.message // "Unknown error"' >&2
-            exit 1
-          fi
+            sleep $RETRY_DELAY
+            RETRY_DELAY=$((RETRY_DELAY * 2))
+          done
 
-          REVIEW=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text')
-
-          if [ -z "$REVIEW" ] || [ "$REVIEW" = "null" ]; then
-            echo "Gemini returned empty review" >&2
-            exit 1
-          fi
-
-          echo "$REVIEW" > /tmp/review.md
-          echo "Review generated successfully"
+          echo "review_status=unavailable" >> $GITHUB_OUTPUT
+          echo "Gemini API unavailable after $MAX_RETRIES attempts. Skipping review gracefully."
+          exit 0
 
       - name: Post Formal Pull Request Review
+        if: steps.gemini.outputs.review_status == 'success'
         env:
           GH_TOKEN: ${{ steps.generate_token.outputs.token }}
         run: |
