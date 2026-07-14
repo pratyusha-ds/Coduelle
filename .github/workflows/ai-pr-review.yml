@@ -1,39 +1,30 @@
-name: AI PR Review
+name: AI Code Review with Gemini
 
 on:
   pull_request:
-    branches: [dev, main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize]
+    branches:
+      - main
+      - dev
+
+permissions:
+  pull-requests: write
+  contents: read
 
 jobs:
   review:
     runs-on: ubuntu-latest
-
     steps:
-      - name: AI Code Review with Gemini
-        uses: sshnaidm/gemini-code-review-action@v2
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
+          fetch-depth: 0
+
+      - name: Run Gemini Code Review
+        uses: sshnaidm/gemini-code-review-action@v2
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           gemini-key: ${{ secrets.GEMINI_API_KEY }}
-          model: gemini-2.5-flash
-          prompt: |
-            You are a senior software engineer reviewing a pull request for a real-time competitive coding platform called Coduelle.
-            The backend is Java/Spring Boot (gateway + judge worker), the frontend is Next.js/TypeScript with Tailwind CSS.
-            Code execution is sandboxed via Docker in the judge worker.
-
-            Review the diff and provide a MAXIMUM of 3 key architectural suggestions. Be concise and actionable.
-
-            Focus areas:
-            1. Security flaws — especially Docker boundary escapes or code execution vulnerabilities in the judge worker.
-            2. Infinite loop or memory leakage risks in the code execution pipeline.
-            3. Proper Spring Boot practices — correct usage of database transactions, clean controller patterns, proper bean scoping.
-            4. Mobile UI styling bugs in Tailwind CSS or Next.js layout structures.
-
-            Ignore these files to save tokens: package-lock.json, build.gradle.kts, settings.gradle.kts, yarn.lock, gradle-wrapper.jar.
-
-            For each suggestion, state the file, the issue, and a one-line fix. Do not nitpick formatting.
-          files_to_ignore: |
-            package-lock.json
-            build.gradle.kts
-            settings.gradle.kts
-            yarn.lock
-            **/gradle-wrapper.jar
+          model: "gemini-2.5-flash"
