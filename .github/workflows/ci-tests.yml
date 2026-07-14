@@ -19,6 +19,9 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Grant execute permission to Gradle wrapper
+        run: chmod +x gradlew
+
       - name: Run Gateway Service Tests
         run: ./gradlew :coduelle-gateway:test
 
