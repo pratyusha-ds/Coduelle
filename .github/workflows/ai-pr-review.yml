@@ -20,11 +20,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate Gemini Bot Token
+        uses: actions/create-github-app-token@v1
+        id: generate_token
+        with:
+          app-id: ${{ secrets.GEMINI_BOT_APP_ID }}
+          private_key: ${{ secrets.GEMINI_BOT_PRIVATE_KEY }}
+
       - name: Run Gemini Code Review
         uses: sshnaidm/gemini-code-review-action@v2
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.generate_token.outputs.token }}
           gemini-key: ${{ secrets.GEMINI_API_KEY }}
           model: "gemini-3.5-flash"
+          prompt: |
+            You are a strict, helpful code review assistant. For every issue or bug you discover:
+            1. Clearly state the performance, architectural, or logic problem.
+            2. Provide the exact fix wrapped inside a GitHub suggestion code block like this:
+               ```suggestion
+               [fixed code snippet]
+               ```
+               Ensure the code inside the suggestion snippet accurately replaces the relevant chunk of the diff.
