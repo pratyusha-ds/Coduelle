@@ -2,7 +2,7 @@ name: AI Code Review with Gemini
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
     branches:
       - main
       - dev
@@ -20,12 +20,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Request Review from Gemini Bot
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr edit ${{ github.event.pull_request.number }} --add-reviewer "coduelle-gemini-bot[bot]"
-
       - name: Generate Gemini Bot Token
         uses: actions/create-github-app-token@v1
         id: generate_token
@@ -33,19 +27,46 @@ jobs:
           app-id: ${{ secrets.GEMINI_BOT_APP_ID }}
           private-key: ${{ secrets.GEMINI_BOT_PRIVATE_KEY }}
 
-      - name: Run Gemini Code Review
-        uses: sshnaidm/gemini-code-review-action@v2
+      - name: Generate AI Review via Gemini
+        id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        with:
-          github-token: ${{ steps.generate_token.outputs.token }}
-          gemini-key: ${{ secrets.GEMINI_API_KEY }}
-          model: "gemini-3.5-flash"
-          prompt: |
-            You are a strict, helpful code review assistant. For every issue or bug you discover:
-            1. Clearly state the performance, architectural, or logic problem.
-            2. Provide the exact fix wrapped inside a GitHub suggestion code block like this:
-               ```suggestion
-               [fixed code snippet]
-               ```
-               Ensure the code inside the suggestion snippet accurately replaces the relevant chunk of the diff.
+        run: |
+          DIFF=$(git diff origin/${{ github.base_ref }}...HEAD)
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg diff "$DIFF" '{
+              contents: [{
+                parts: [{
+                  text: "You are a strict, helpful code review assistant for a project called Coduelle. Review the following pull request diff and provide a concise, actionable code review.\n\nFor every issue you discover:\n1. Clearly state the performance, architectural, or logic problem.\n2. Provide the exact fix wrapped inside a GitHub suggestion code block like this:\n\n```suggestion\n[fixed code snippet]\n```\n\nEnsure the code inside the suggestion snippet accurately replaces the relevant chunk of the diff.\nIf there are no issues, respond with: \"No issues found. The changes look good.\"\n\nDiff to review:\n$diff"
+                }]
+              }]
+            }')")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Gemini API returned HTTP $HTTP_CODE" >&2
+            echo "$BODY" | jq -r '.error.message // "Unknown error"' >&2
+            exit 1
+          fi
+
+          REVIEW=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text')
+
+          if [ -z "$REVIEW" ] || [ "$REVIEW" = "null" ]; then
+            echo "Gemini returned empty review" >&2
+            exit 1
+          fi
+
+          echo "$REVIEW" > /tmp/review.md
+          echo "Review generated successfully"
+
+      - name: Post Formal Pull Request Review
+        env:
+          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} \
+            --body-file /tmp/review.md
